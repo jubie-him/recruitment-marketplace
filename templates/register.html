@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Register - Recruitment Marketplace{% endblock %}
+{% block content %}
+    <h2>Create an Account</h2>
+    {% if error %}
+        <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="/register">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" required>
+        
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required>
+
+        <label for="user_type">I am a</label>
+        <select id="user_type" name="user_type" required>
+            <option value="jobseeker">Job Seeker</option>
+            <option value="recruiter">Recruiter</option>
+        </select>
+
+        <input type="submit" value="Register">
+    </form>
+{% endblock %}
