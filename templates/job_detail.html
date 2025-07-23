@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} - Job Details{% endblock %}
+{% block content %}
+    <h2>{{ job.title }}</h2>
+    <p><strong>Location:</strong> {{ job.location }}</p>
+    <p>{{ job.description }}</p>
+    {% if user %}
+        {% if user.user_type == 'jobseeker' %}
+            {% if applied %}
+                <p>You have already applied to this job.</p>
+            {% else %}
+                <h3>Apply Now</h3>
+                <form method="post" action="/jobs/{{ job.key }}/apply" enctype="multipart/form-data">
+                    <label for="full_name">Full Name</label>
+                    <input type="text" id="full_name" name="full_name" required>
+                    
+                    <label for="email">Email</label>
+                    <input type="email" id="email" name="email" required>
+                    
+                    <label for="resume">Resume (PDF or Word)</label>
+                    <input type="file" id="resume" name="resume" accept=".pdf,.doc,.docx" required>
+                    
+                    <input type="submit" value="Submit Application">
+                </form>
+            {% endif %}
+        {% elif user.user_type == 'recruiter' and job.recruiter_key == user.key %}
+            <p><a href="/recruiter/jobs/{{ job.key }}/applicants">View applicants for this job</a></p>
+        {% endif %}
+    {% else %}
+        <p>Please <a href="/login">login</a> or <a href="/register">register</a> to apply for this job.</p>
+    {% endif %}
+{% endblock %}
