@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Job Seeker{% endblock %}
+{% block content %}
+    <h2>Your Dashboard</h2>
+    <p>Hello, {{ user.username }}! Browse jobs and apply.</p>
+    <div class="dashboard-grid">
+        {% for job in jobs %}
+        <div class="job-card">
+            <h3>{{ job.title }}</h3>
+            <p><strong>Location:</strong> {{ job.location }}</p>
+            <p>{{ job.description[:120] }}{% if job.description|length > 120 %}...{% endif %}</p>
+            <a href="/jobs/{{ job.key }}">View details</a>
+            {% if job.key in applied_job_ids %}
+                <p><em>Applied</em></p>
+            {% endif %}
+        </div>
+        {% else %}
+        <p>No job postings available.</p>
+        {% endfor %}
+    </div>
+{% endblock %}
