@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title or "Recruitment Marketplace" }}</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f6f6f6;
+            color: #333;
+        }
+        header {
+            background-color: #2c3e50;
+            color: #fff;
+            padding: 1rem;
+        }
+        nav {
+            display: flex;
+            align-items: center;
+        }
+        nav a {
+            color: #fff;
+            margin-right: 1rem;
+            text-decoration: none;
+        }
+        nav a:hover {
+            text-decoration: underline;
+        }
+        .container {
+            max-width: 900px;
+            margin: 2rem auto;
+            padding: 1.5rem;
+            background-color: #fff;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+        }
+        footer {
+            text-align: center;
+            padding: 1rem;
+            color: #888;
+        }
+        .flash {
+            color: red;
+        }
+        /* Simple styles for message lists */
+        ul.messages {
+            list-style: none;
+            padding: 0;
+        }
+        ul.messages li {
+            margin-bottom: 0.5rem;
+        }
+        .message-sent {
+            text-align: right;
+            background-color: #e8f5e9;
+            padding: 0.5rem;
+            border-radius: 4px;
+            margin-left: 25%;
+        }
+        .message-received {
+            text-align: left;
+            background-color: #e3f2fd;
+            padding: 0.5rem;
+            border-radius: 4px;
+            margin-right: 25%;
+        }
+        .sidebar {
+            width: 25%;
+            float: left;
+            padding-right: 1rem;
+        }
+        .chat {
+            width: 75%;
+            float: left;
+        }
+        .clearfix::after {
+            content: "";
+            display: table;
+            clear: both;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/">Home</a>
+            {% if user %}
+                {% if user.role == 'candidate' %}
+                    <a href="/candidate/dashboard">Dashboard</a>
+                    <a href="/candidate/messages">Messages</a>
+                {% elif user.role == 'recruiter' %}
+                    <a href="/recruiter/dashboard">Dashboard</a>
+                    <a href="/recruiter/messages">Messages</a>
+                    <a href="/recruiter/candidates">Candidates</a>
+                {% endif %}
+                <span style="margin-left: auto;">Logged in as {{ user.username }}</span>
+                <a href="/logout" style="margin-left: 1rem;">Logout</a>
+            {% else %}
+                <a href="/login">Login</a>
+                <a href="/register">Register</a>
+            {% endif %}
+        </nav>
+    </header>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+    <footer>
+        <p>Recruitment Marketplace Prototype</p>
+    </footer>
+</body>
+</html>

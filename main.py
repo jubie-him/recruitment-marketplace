@@ -1,412 +1,578 @@
 """
-Recruitment Marketplace Platform
---------------------------------
+Recruitment Marketplace Prototype using FastAPI
 
-This is a basic prototype of a recruitment marketplace built using FastAPI and
-the Deta platform.  The application provides two primary user roles: **job
-seekers** and **recruiters**.
+This application implements a minimal recruitment marketplace with two user
+roles: candidates and recruiters. Candidates can upload documents and browse
+job postings, while recruiters can create job postings and view candidates.
+Both roles can exchange direct messages. A simple session mechanism using
+randomly generated session IDs is implemented to keep users logged in.
 
-Job seekers can register, log in, browse available jobs and apply to them by
-submitting their details and uploading a resume.  Recruiters can create job
-postings, review applicants and download uploaded resumes.  Data is persisted
-using Deta Base (a simple NoSQL database) and resumes are stored in Deta
-Drive.  Sessions are handled via cookies with a server‑generated session
-token.  This code is intentionally simple to focus on demonstrating core
-functionality rather than production‑ready features such as robust security,
-validation and error handling.
-
-To run locally install the dependencies from ``requirements.txt`` and start
-the app with ``uvicorn main:app --reload``.  When deploying to Deta you do
-not need a separate server; the Deta runtime automatically serves your FastAPI
-application.
+The application relies only on Python's standard library and the pre‑installed
+packages FastAPI, starlette, and jinja2. Data is persisted in a SQLite
+database located in the project directory (``database.db``). Uploaded
+documents are stored in the ``uploads/`` folder. This solution is entirely
+open source and does not depend on any proprietary services.
 """
 
-from __future__ import annotations
-
 import os
-import uuid
+import sqlite3
 import hashlib
-from typing import Optional, Dict, Any
+import secrets
+import datetime
+from typing import Optional, Dict, Tuple, List
 
-from fastapi import (
-    FastAPI,
-    Request,
-    Form,
-    UploadFile,
-    File,
-    Depends,
-    HTTPException,
-    status,
-)
+from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-
-# When running on Deta the `deta` module will be available.  When running
-# locally without Deta (for example during development), fallback to a simple
-# in‑memory store so that the app can be exercised without an account.  This
-# fallback is deliberately simplistic and should not be used for anything
-# beyond testing.
-try:
-    from deta import Deta  # type: ignore
-    _DETA_AVAILABLE = True
-except ImportError:
-    Deta = None  # type: ignore
-    _DETA_AVAILABLE = False
+from fastapi.templating import Jinja2Templates
 
 
-class InMemoryBase:
-    """Minimal in‑memory replacement for Deta Base used for local testing."""
+# ---------------------------------------------------------------------------
+# Database helpers
+#
+DATABASE_PATH = os.path.join(os.path.dirname(__file__), "database.db")
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 
-    def __init__(self, name: str):
-        self._items: Dict[str, Dict[str, Any]] = {}
-
-    def put(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        key = data.get("key") or str(uuid.uuid4())
-        data["key"] = key
-        self._items[key] = data
-        return data
-
-    def get(self, key: str) -> Optional[Dict[str, Any]]:
-        return self._items.get(key)
-
-    def fetch(self, query: Optional[Dict[str, Any]] = None) -> Any:
-        # Emulate Deta Base fetch.  This returns an object with an ``items``
-        # attribute containing a list of matching entries.  We ignore paging.
-        class _Result:
-            def __init__(self, items):
-                self.items = items
-
-        if not query:
-            return _Result(list(self._items.values()))
-        # All query keys must match exactly.
-        items = [v for v in self._items.values() if all(v.get(k) == val for k, val in query.items())]
-        return _Result(items)
-
-    def delete(self, key: str) -> None:
-        self._items.pop(key, None)
+# Ensure upload directory exists
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-class InMemoryDrive:
-    """Minimal in‑memory replacement for Deta Drive used for local testing."""
-
-    def __init__(self, name: str):
-        self._files: Dict[str, bytes] = {}
-
-    def put(self, name: str, data: bytes | UploadFile) -> None:
-        if isinstance(data, UploadFile):
-            content = data.file.read()
-        else:
-            content = data
-        self._files[name] = content
-
-    def get(self, name: str) -> Any:
-        # Return a file‑like object that can be read.  In Deta Drive the
-        # returned object has a ``read`` method.  We'll emulate that.
-        content = self._files.get(name)
-        if content is None:
-            return None
-        return type("_File", (), {"read": lambda self_: content})()
-
-    def delete(self, name: str) -> None:
-        self._files.pop(name, None)
+def get_db_connection() -> sqlite3.Connection:
+    """Return a SQLite3 connection with row_factory returning dict-like rows."""
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
-def get_deta_instances() -> tuple[Any, Any, Any, Any]:
-    """
-    Acquire instances of Deta Base and Drive for users, jobs, applications and
-    resumes.  When running on Deta the ``DETA_PROJECT_KEY`` environment
-    variable will be available and the real Deta classes will be used.  When
-    running locally fallback to in‑memory stores.
-    """
-    if _DETA_AVAILABLE and os.getenv("DETA_PROJECT_KEY"):
-        deta = Deta(os.getenv("DETA_PROJECT_KEY"))
-        users_db = deta.Base("users")
-        jobs_db = deta.Base("jobs")
-        applications_db = deta.Base("applications")
-        sessions_db = deta.Base("sessions")
-        resumes_drive = deta.Drive("resumes")
-        return users_db, jobs_db, applications_db, sessions_db, resumes_drive
-    # Local fallback
-    users_db = InMemoryBase("users")
-    jobs_db = InMemoryBase("jobs")
-    applications_db = InMemoryBase("applications")
-    sessions_db = InMemoryBase("sessions")
-    resumes_drive = InMemoryDrive("resumes")
-    return users_db, jobs_db, applications_db, sessions_db, resumes_drive
+def init_db() -> None:
+    """Initialize database tables if they don't exist."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('candidate','recruiter'))
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            original_name TEXT NOT NULL,
+            uploaded_at DATETIME NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_postings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recruiter_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            location TEXT,
+            salary_range TEXT,
+            created_at DATETIME NOT NULL,
+            FOREIGN KEY(recruiter_id) REFERENCES users(id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER NOT NULL,
+            receiver_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            timestamp DATETIME NOT NULL,
+            FOREIGN KEY(sender_id) REFERENCES users(id),
+            FOREIGN KEY(receiver_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
 
 
-# Initialise data stores
-users_db, jobs_db, applications_db, sessions_db, resumes_drive = get_deta_instances()
+# Initialize database when module is imported
+init_db()
 
 
-app = FastAPI()
+# ---------------------------------------------------------------------------
+# Session management
+#
+# For this prototype, sessions are kept in memory. Each logged in user will
+# have an entry in the sessions dictionary mapping a session ID to a user ID.
+# When the server restarts, all sessions are lost. In a production
+# implementation you would store sessions in a more durable storage or use a
+# token based authentication mechanism.
 
-# Jinja2 templates live in the ``templates`` directory.
-templates = Jinja2Templates(directory=str(os.path.join(os.path.dirname(__file__), "templates")))
-# Provide a global ``year`` variable for the templates (used in the footer).
-from datetime import datetime
-templates.env.globals['year'] = datetime.utcnow().year
+sessions: Dict[str, int] = {}
 
-# Serve static files (CSS) from the ``static`` directory
-app.mount(
-    "/static",
-    StaticFiles(directory=str(os.path.join(os.path.dirname(__file__), "static"))),
-    name="static",
-)
+
+def create_session(user_id: int) -> str:
+    """Create a new session for the given user and return its session ID."""
+    session_id = secrets.token_hex(16)
+    sessions[session_id] = user_id
+    return session_id
+
+
+def get_current_user(request: Request) -> Optional[sqlite3.Row]:
+    """Return the user row corresponding to the session cookie, if present."""
+    session_id = request.cookies.get("session_id")
+    if session_id and session_id in sessions:
+        user_id = sessions.get(session_id)
+        conn = get_db_connection()
+        user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        conn.close()
+        return user
+    return None
 
 
 def hash_password(password: str) -> str:
-    """Hash a password using SHA256."""
+    """Return SHA256 hash of the given password."""
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
-def verify_password(password: str, password_hash: str) -> bool:
-    return hash_password(password) == password_hash
+# ---------------------------------------------------------------------------
+# FastAPI application and routes
+
+app = FastAPI(title="Recruitment Marketplace Prototype")
+
+templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+
+# Mount the uploads directory to serve uploaded documents
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
-def create_session(user_key: str) -> str:
-    """Create a new session token for a given user key and persist it."""
-    token = str(uuid.uuid4())
-    sessions_db.put({"key": token, "user_key": user_key})
-    return token
+def login_required(role: Optional[str] = None):
+    """
+    Decorator generator to enforce that a user is logged in and optionally has
+    a specific role. Returns a function that can be used as dependency in
+    route definitions.
+    """
 
+    async def dependency(request: Request) -> sqlite3.Row:
+        user = get_current_user(request)
+        if user is None:
+            # Not logged in: redirect to login page
+            raise RedirectResponse(url="/login")
+        if role and user["role"] != role:
+            # Wrong role: redirect to appropriate dashboard
+            if user["role"] == "candidate":
+                raise RedirectResponse(url="/candidate/dashboard")
+            else:
+                raise RedirectResponse(url="/recruiter/dashboard")
+        return user
 
-def get_current_user(request: Request) -> Optional[Dict[str, Any]]:
-    """Return the current logged in user based on the session cookie."""
-    token = request.cookies.get("session_token")
-    if not token:
-        return None
-    session = sessions_db.get(token)
-    if not session:
-        return None
-    user_key = session.get("user_key")
-    if not user_key:
-        return None
-    user = users_db.get(user_key)
-    return user
+    return dependency
 
 
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request, user: Optional[Dict[str, Any]] = Depends(get_current_user)):
-    """Render the landing page.  Shows available jobs and login/register options."""
-    # Fetch all jobs to display on the home page
-    jobs_result = jobs_db.fetch()
-    jobs = jobs_result.items if jobs_result else []
-    return templates.TemplateResponse(
-        "home.html",
-        {"request": request, "user": user, "jobs": jobs},
-    )
+async def home(request: Request):
+    """Home page: show welcome message and navigation based on login status."""
+    user = get_current_user(request)
+    return templates.TemplateResponse("home.html", {"request": request, "user": user})
 
 
 @app.get("/register", response_class=HTMLResponse)
-async def register_get(request: Request):
-    return templates.TemplateResponse("register.html", {"request": request})
+async def register_form(request: Request, role: str = "candidate"):
+    """Display the registration form. Role parameter chooses candidate or recruiter."""
+    role = role.lower()
+    if role not in ("candidate", "recruiter"):
+        role = "candidate"
+    return templates.TemplateResponse(
+        "register.html", {"request": request, "role": role, "error": None}
+    )
 
 
-@app.post("/register")
-async def register_post(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    user_type: str = Form(...),
-):
-    # Check if username already exists
-    existing = users_db.fetch({"username": username})
-    if existing and existing.items:
+@app.post("/register", response_class=HTMLResponse)
+async def register(request: Request, username: str = Form(...), password: str = Form(...), role: str = Form(...)):
+    """Handle registration POST: create user in database if username is free."""
+    role = role.lower()
+    if role not in ("candidate", "recruiter"):
+        role = "candidate"
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+            (username, hash_password(password), role),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # Username already exists
+        conn.close()
         return templates.TemplateResponse(
             "register.html",
-            {"request": request, "error": "Username already exists."},
+            {
+                "request": request,
+                "role": role,
+                "error": f"Username '{username}' is already taken. Please choose another.",
+            },
         )
-    # Create new user
-    user_key = f"u-{uuid.uuid4().hex}"
-    users_db.put(
-        {
-            "key": user_key,
-            "username": username,
-            "password_hash": hash_password(password),
-            "user_type": user_type,
-        }
-    )
-    # Automatically log in the user
-    token = create_session(user_key)
-    response = RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
-    response.set_cookie("session_token", token, httponly=True)
+    conn.close()
+    # Automatically log the user in after registration
+    user = None
+    conn = get_db_connection()
+    user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    conn.close()
+    session_id = create_session(user["id"])
+    response = RedirectResponse(url=f"/{role}/dashboard", status_code=302)
+    response.set_cookie(key="session_id", value=session_id, httponly=True, max_age=3600 * 24)
     return response
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_get(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+async def login_form(request: Request, role: Optional[str] = None):
+    """Display login form. Optionally pre-select a role for user guidance."""
+    return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
 
-@app.post("/login")
-async def login_post(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-):
-    # Find user by username
-    result = users_db.fetch({"username": username})
-    user = result.items[0] if result and result.items else None
-    if not user or not verify_password(password, user.get("password_hash", "")):
+@app.post("/login", response_class=HTMLResponse)
+async def login(request: Request, username: str = Form(...), password: str = Form(...)):
+    """Handle login: validate credentials and create session."""
+    conn = get_db_connection()
+    user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    conn.close()
+    if user is None or user["password_hash"] != hash_password(password):
         return templates.TemplateResponse(
             "login.html",
-            {"request": request, "error": "Invalid username or password."},
+            {
+                "request": request,
+                "error": "Invalid username or password. Please try again.",
+            },
         )
-    # Create session and redirect to dashboard
-    token = create_session(user["key"])
-    response = RedirectResponse(url="/dashboard", status_code=status.HTTP_302_FOUND)
-    response.set_cookie("session_token", token, httponly=True)
+    session_id = create_session(user["id"])
+    # Redirect to role dashboard
+    role = user["role"]
+    response = RedirectResponse(url=f"/{role}/dashboard", status_code=302)
+    response.set_cookie(key="session_id", value=session_id, httponly=True, max_age=3600 * 24)
     return response
 
 
 @app.get("/logout")
 async def logout(request: Request):
-    # Remove session from database and clear cookie
-    token = request.cookies.get("session_token")
-    if token:
-        sessions_db.delete(token)
-    response = RedirectResponse(url="/", status_code=status.HTTP_302_FOUND)
-    response.delete_cookie("session_token")
+    """Log user out by deleting session and clearing cookie."""
+    session_id = request.cookies.get("session_id")
+    if session_id and session_id in sessions:
+        sessions.pop(session_id)
+    response = RedirectResponse(url="/", status_code=302)
+    response.delete_cookie(key="session_id")
     return response
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, user: Optional[Dict[str, Any]] = Depends(get_current_user)):
-    if not user:
-        return RedirectResponse("/login", status_code=status.HTTP_302_FOUND)
-    # Determine what to show based on user_type
-    if user["user_type"] == "jobseeker":
-        jobs = jobs_db.fetch().items
-        # Also fetch applications for this user
-        applications = applications_db.fetch({"user_key": user["key"]}).items
-        applied_job_ids = {app["job_key"] for app in applications}
-        return templates.TemplateResponse(
-            "dashboard_jobseeker.html",
-            {
-                "request": request,
-                "user": user,
-                "jobs": jobs,
-                "applied_job_ids": applied_job_ids,
-            },
-        )
-    else:  # recruiter
-        # Fetch jobs created by this recruiter
-        jobs = jobs_db.fetch({"recruiter_key": user["key"]}).items
-        return templates.TemplateResponse(
-            "dashboard_recruiter.html",
-            {"request": request, "user": user, "jobs": jobs},
-        )
+# ---------------------------------------------------------------------------
+# Candidate routes
 
-
-@app.get("/jobs/{job_key}", response_class=HTMLResponse)
-async def job_detail(
-    job_key: str, request: Request, user: Optional[Dict[str, Any]] = Depends(get_current_user)
-):
-    job = jobs_db.get(job_key)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    # Check if user already applied
-    applied = False
-    if user and user["user_type"] == "jobseeker":
-        apps = applications_db.fetch({"job_key": job_key, "user_key": user["key"]}).items
-        applied = len(apps) > 0
+@app.get("/candidate/dashboard", response_class=HTMLResponse)
+async def candidate_dashboard(request: Request, user: sqlite3.Row = Depends(login_required("candidate"))):
+    """Candidate dashboard: list uploaded documents and job postings."""
+    # Fetch candidate documents
+    conn = get_db_connection()
+    docs = conn.execute(
+        "SELECT id, filename, original_name, uploaded_at FROM documents WHERE user_id = ? ORDER BY uploaded_at DESC",
+        (user["id"],),
+    ).fetchall()
+    # Fetch all job postings
+    jobs = conn.execute(
+        "SELECT jp.id, jp.title, jp.description, jp.location, jp.salary_range, jp.created_at, u.username AS recruiter_username "
+        "FROM job_postings jp JOIN users u ON jp.recruiter_id = u.id ORDER BY jp.created_at DESC"
+    ).fetchall()
+    conn.close()
     return templates.TemplateResponse(
-        "job_detail.html",
-        {"request": request, "user": user, "job": job, "applied": applied},
-    )
-
-
-@app.post("/jobs/{job_key}/apply")
-async def apply_job(
-    job_key: str,
-    request: Request,
-    full_name: str = Form(...),
-    email: str = Form(...),
-    resume: UploadFile = File(...),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user),
-):
-    # Only jobseekers can apply
-    if not user or user["user_type"] != "jobseeker":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    # Prevent duplicate applications
-    existing = applications_db.fetch({"job_key": job_key, "user_key": user["key"]}).items
-    if existing:
-        return RedirectResponse(f"/jobs/{job_key}", status_code=status.HTTP_302_FOUND)
-    # Save resume
-    resume_filename = f"{uuid.uuid4().hex}_{resume.filename}"
-    # Deta Drive expects raw bytes or file‑like object; we use UploadFile.file
-    resumes_drive.put(resume_filename, resume)
-    # Save application
-    applications_db.put(
+        "candidate_dashboard.html",
         {
-            "key": f"a-{uuid.uuid4().hex}",
-            "job_key": job_key,
-            "user_key": user["key"],
-            "full_name": full_name,
-            "email": email,
-            "resume_filename": resume_filename,
-        }
+            "request": request,
+            "user": user,
+            "documents": docs,
+            "job_postings": jobs,
+        },
     )
-    return RedirectResponse(f"/dashboard", status_code=status.HTTP_302_FOUND)
 
 
-@app.get("/recruiter/jobs/create", response_class=HTMLResponse)
-async def create_job_get(request: Request, user: Optional[Dict[str, Any]] = Depends(get_current_user)):
-    # Only recruiters can create jobs
-    if not user or user["user_type"] != "recruiter":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    return templates.TemplateResponse("create_job.html", {"request": request, "user": user})
+@app.post("/candidate/upload", response_class=RedirectResponse)
+async def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+    user: sqlite3.Row = Depends(login_required("candidate")),
+):
+    """Handle document upload for candidates."""
+    if not file.filename:
+        return RedirectResponse(url="/candidate/dashboard", status_code=302)
+    # Save file to uploads directory under user ID
+    user_dir = os.path.join(UPLOAD_DIR, str(user["id"]))
+    os.makedirs(user_dir, exist_ok=True)
+    # Ensure unique filename by prefixing timestamp and random suffix
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+    random_suffix = secrets.token_hex(4)
+    ext = os.path.splitext(file.filename)[1]
+    unique_name = f"{timestamp}_{random_suffix}{ext}"
+    file_path = os.path.join(user_dir, unique_name)
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+    # Insert metadata into database
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT INTO documents (user_id, filename, original_name, uploaded_at) VALUES (?, ?, ?, ?)",
+        (
+            user["id"],
+            f"{user['id']}/{unique_name}",
+            file.filename,
+            datetime.datetime.utcnow(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return RedirectResponse(url="/candidate/dashboard", status_code=302)
 
 
-@app.post("/recruiter/jobs/create")
-async def create_job_post(
+@app.get("/candidate/messages", response_class=HTMLResponse)
+async def candidate_messages(request: Request, user: sqlite3.Row = Depends(login_required("candidate"))):
+    """Display messages for candidates: list conversations and current chat."""
+    # Determine conversation partner from query parameter
+    partner_username = request.query_params.get("with")
+    conn = get_db_connection()
+    # Get a list of all recruiters (conversation partners) the candidate has communicated with
+    partners = conn.execute(
+        "SELECT DISTINCT u.id AS id, u.username AS username FROM users u JOIN messages m "
+        "ON (u.id = m.sender_id OR u.id = m.receiver_id) WHERE (? IN (m.sender_id, m.receiver_id)) AND u.role = 'recruiter' AND u.id != ?",
+        (user["id"], user["id"]),
+    ).fetchall()
+    current_partner = None
+    messages = []
+    if partner_username:
+        # fetch partner row
+        current_partner = conn.execute(
+            "SELECT * FROM users WHERE username = ? AND role = 'recruiter'", (partner_username,)
+        ).fetchone()
+        if current_partner:
+            # fetch messages between candidate and partner ordered by timestamp
+            messages = conn.execute(
+                "SELECT m.*, s.username AS sender_username, r.username AS receiver_username FROM messages m "
+                "JOIN users s ON m.sender_id = s.id JOIN users r ON m.receiver_id = r.id "
+                "WHERE (m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?) "
+                "ORDER BY m.timestamp ASC",
+                (
+                    user["id"],
+                    current_partner["id"],
+                    current_partner["id"],
+                    user["id"],
+                ),
+            ).fetchall()
+    conn.close()
+    return templates.TemplateResponse(
+        "messages.html",
+        {
+            "request": request,
+            "user": user,
+            "partners": partners,
+            "current_partner": current_partner,
+            "messages": messages,
+        },
+    )
+
+
+@app.post("/candidate/message/send")
+async def candidate_send_message(
+    request: Request,
+    to_username: str = Form(...),
+    content: str = Form(...),
+    user: sqlite3.Row = Depends(login_required("candidate")),
+):
+    """Send a message from candidate to a recruiter."""
+    # Validate partner exists and is recruiter
+    conn = get_db_connection()
+    partner = conn.execute(
+        "SELECT * FROM users WHERE username = ? AND role = 'recruiter'", (to_username,)
+    ).fetchone()
+    if partner and content.strip():
+        conn.execute(
+            "INSERT INTO messages (sender_id, receiver_id, content, timestamp) VALUES (?, ?, ?, ?)",
+            (
+                user["id"],
+                partner["id"],
+                content.strip(),
+                datetime.datetime.utcnow(),
+            ),
+        )
+        conn.commit()
+    conn.close()
+    return RedirectResponse(url=f"/candidate/messages?with={to_username}", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Recruiter routes
+
+@app.get("/recruiter/dashboard", response_class=HTMLResponse)
+async def recruiter_dashboard(request: Request, user: sqlite3.Row = Depends(login_required("recruiter"))):
+    """Recruiter dashboard: list job postings and provide creation form."""
+    conn = get_db_connection()
+    jobs = conn.execute(
+        "SELECT * FROM job_postings WHERE recruiter_id = ? ORDER BY created_at DESC",
+        (user["id"],),
+    ).fetchall()
+    # Fetch candidate list for quick access
+    candidates = conn.execute(
+        "SELECT id, username FROM users WHERE role = 'candidate' ORDER BY username ASC"
+    ).fetchall()
+    conn.close()
+    return templates.TemplateResponse(
+        "recruiter_dashboard.html",
+        {
+            "request": request,
+            "user": user,
+            "job_postings": jobs,
+            "candidates": candidates,
+        },
+    )
+
+
+@app.post("/recruiter/job/create")
+async def create_job(
     request: Request,
     title: str = Form(...),
     description: str = Form(...),
-    location: str = Form(...),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user),
+    location: str = Form(None),
+    salary_range: str = Form(None),
+    user: sqlite3.Row = Depends(login_required("recruiter")),
 ):
-    if not user or user["user_type"] != "recruiter":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    job_key = f"j-{uuid.uuid4().hex}"
-    jobs_db.put(
-        {
-            "key": job_key,
-            "title": title,
-            "description": description,
-            "location": location,
-            "recruiter_key": user["key"],
-        }
+    """Create a new job posting by recruiter."""
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT INTO job_postings (recruiter_id, title, description, location, salary_range, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            user["id"],
+            title,
+            description,
+            location or "",
+            salary_range or "",
+            datetime.datetime.utcnow(),
+        ),
     )
-    return RedirectResponse("/dashboard", status_code=status.HTTP_302_FOUND)
+    conn.commit()
+    conn.close()
+    return RedirectResponse(url="/recruiter/dashboard", status_code=302)
 
 
-@app.get("/recruiter/jobs/{job_key}/applicants", response_class=HTMLResponse)
-async def view_applicants(
-    job_key: str,
-    request: Request,
-    user: Optional[Dict[str, Any]] = Depends(get_current_user),
-):
-    if not user or user["user_type"] != "recruiter":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    job = jobs_db.get(job_key)
-    if not job or job.get("recruiter_key") != user["key"]:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    # Fetch applicants
-    applicants = applications_db.fetch({"job_key": job_key}).items
+@app.get("/recruiter/candidates", response_class=HTMLResponse)
+async def recruiter_candidates(request: Request, user: sqlite3.Row = Depends(login_required("recruiter"))):
+    """View list of candidates and their documents."""
+    conn = get_db_connection()
+    candidates = conn.execute(
+        "SELECT id, username FROM users WHERE role = 'candidate' ORDER BY username ASC"
+    ).fetchall()
+    # Optionally pick a candidate to view documents
+    candidate_username = request.query_params.get("username")
+    selected_candidate = None
+    docs: List[sqlite3.Row] = []
+    if candidate_username:
+        selected_candidate = conn.execute(
+            "SELECT * FROM users WHERE username = ? AND role = 'candidate'",
+            (candidate_username,),
+        ).fetchone()
+        if selected_candidate:
+            docs = conn.execute(
+                "SELECT id, filename, original_name, uploaded_at FROM documents WHERE user_id = ? ORDER BY uploaded_at DESC",
+                (selected_candidate["id"],),
+            ).fetchall()
+    conn.close()
     return templates.TemplateResponse(
-        "applicants.html",
-        {"request": request, "user": user, "job": job, "applicants": applicants},
+        "recruiter_candidates.html",
+        {
+            "request": request,
+            "user": user,
+            "candidates": candidates,
+            "selected_candidate": selected_candidate,
+            "documents": docs,
+        },
     )
 
 
-@app.get("/resume/{filename}")
-async def download_resume(filename: str):
-    # Provide a simple way to download resumes
-    file_obj = resumes_drive.get(filename)
-    if not file_obj:
-        raise HTTPException(status_code=404, detail="Resume not found")
-    content = file_obj.read()
-    return Response(content, media_type="application/octet-stream", headers={"Content-Disposition": f"attachment; filename={filename}"})
+@app.get("/recruiter/messages", response_class=HTMLResponse)
+async def recruiter_messages(request: Request, user: sqlite3.Row = Depends(login_required("recruiter"))):
+    """Display messages for recruiters."""
+    partner_username = request.query_params.get("with")
+    conn = get_db_connection()
+    # Get list of candidates the recruiter has communicated with
+    partners = conn.execute(
+        "SELECT DISTINCT u.id AS id, u.username AS username FROM users u JOIN messages m "
+        "ON (u.id = m.sender_id OR u.id = m.receiver_id) WHERE (? IN (m.sender_id, m.receiver_id)) "
+        "AND u.role = 'candidate' AND u.id != ?",
+        (user["id"], user["id"]),
+    ).fetchall()
+    current_partner = None
+    messages = []
+    if partner_username:
+        current_partner = conn.execute(
+            "SELECT * FROM users WHERE username = ? AND role = 'candidate'", (partner_username,)
+        ).fetchone()
+        if current_partner:
+            messages = conn.execute(
+                "SELECT m.*, s.username AS sender_username, r.username AS receiver_username FROM messages m "
+                "JOIN users s ON m.sender_id = s.id JOIN users r ON m.receiver_id = r.id "
+                "WHERE (m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?) "
+                "ORDER BY m.timestamp ASC",
+                (
+                    user["id"],
+                    current_partner["id"],
+                    current_partner["id"],
+                    user["id"],
+                ),
+            ).fetchall()
+    conn.close()
+    return templates.TemplateResponse(
+        "messages.html",
+        {
+            "request": request,
+            "user": user,
+            "partners": partners,
+            "current_partner": current_partner,
+            "messages": messages,
+        },
+    )
+
+
+@app.post("/recruiter/message/send")
+async def recruiter_send_message(
+    request: Request,
+    to_username: str = Form(...),
+    content: str = Form(...),
+    user: sqlite3.Row = Depends(login_required("recruiter")),
+):
+    """Send a message from recruiter to a candidate."""
+    conn = get_db_connection()
+    partner = conn.execute(
+        "SELECT * FROM users WHERE username = ? AND role = 'candidate'", (to_username,)
+    ).fetchone()
+    if partner and content.strip():
+        conn.execute(
+            "INSERT INTO messages (sender_id, receiver_id, content, timestamp) VALUES (?, ?, ?, ?)",
+            (
+                user["id"],
+                partner["id"],
+                content.strip(),
+                datetime.datetime.utcnow(),
+            ),
+        )
+        conn.commit()
+    conn.close()
+    return RedirectResponse(url=f"/recruiter/messages?with={to_username}", status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Template utilities
+
+# Register a Jinja2 filter to format datetimes in a readable way
+def datetime_format(value: datetime.datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M:%S") if isinstance(value, datetime.datetime) else str(value)
+
+
+templates.env.filters["datetime_format"] = datetime_format

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Recruiter Dashboard</h2>
+
+<h3>Your Job Postings</h3>
+{% if job_postings %}
+    <table style="width:100%; border-collapse: collapse;">
+        <tr style="background-color:#f2f2f2;">
+            <th style="text-align:left; padding:8px;">Title</th>
+            <th style="text-align:left; padding:8px;">Location</th>
+            <th style="text-align:left; padding:8px;">Salary Range</th>
+            <th style="text-align:left; padding:8px;">Posted</th>
+        </tr>
+        {% for job in job_postings %}
+        <tr>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">{{ job.title }}</td>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">{{ job.location }}</td>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">{{ job.salary_range }}</td>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">{{ job.created_at|datetime_format }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+{% else %}
+    <p>You haven't created any job postings yet.</p>
+{% endif %}
+
+<h4>Create a New Job Posting</h4>
+<form method="post" action="/recruiter/job/create">
+    <label for="title">Title:</label><br>
+    <input type="text" id="title" name="title" required><br><br>
+    <label for="description">Description:</label><br>
+    <textarea id="description" name="description" rows="4" cols="50" required></textarea><br><br>
+    <label for="location">Location:</label><br>
+    <input type="text" id="location" name="location"><br><br>
+    <label for="salary_range">Salary Range:</label><br>
+    <input type="text" id="salary_range" name="salary_range"><br><br>
+    <button type="submit">Create Job</button>
+</form>
+
+<hr>
+
+<h3>Candidates</h3>
+{% if candidates %}
+    <ul>
+        {% for cand in candidates %}
+            <li>
+                {{ cand.username }} - <a href="/recruiter/messages?with={{ cand.username }}">Message</a>
+            </li>
+        {% endfor %}
+    </ul>
+{% else %}
+    <p>No candidates registered yet.</p>
+{% endif %}
+
+{% endblock %}

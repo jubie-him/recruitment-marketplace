@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Welcome to the Recruitment Marketplace</h1>
+<p>This prototype connects candidates with recruiters on a modern,
+  privacy‑aware platform. Candidates can store and share verified
+  documents and credentials, browse job postings, and communicate directly
+  with recruiters. Recruiters can publish job openings, discover
+  qualified candidates, and manage communications.</p>
+
+{% if not user %}
+<p>
+    <strong>New here?</strong>
+    <a href="/register?role=candidate">Sign up as a candidate</a> or
+    <a href="/register?role=recruiter">Sign up as a recruiter</a>.
+</p>
+<p>
+    Already have an account? <a href="/login">Log in</a> to continue.
+</p>
+{% endif %}
+
+{% if user %}
+<p>
+    You are logged in. Visit your dashboard via the navigation links above.
+</p>
+{% endif %}
+
+{% endblock %}

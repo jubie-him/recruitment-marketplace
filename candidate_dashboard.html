@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Candidate Dashboard</h2>
+
+<h3>Your Documents</h3>
+{% if documents %}
+    <ul>
+    {% for doc in documents %}
+        <li>
+            <a href="/uploads/{{ doc.filename }}" target="_blank">{{ doc.original_name }}</a>
+            (uploaded {{ doc.uploaded_at|datetime_format }})
+        </li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>You have not uploaded any documents yet.</p>
+{% endif %}
+
+<h4>Upload a new document</h4>
+<form method="post" action="/candidate/upload" enctype="multipart/form-data">
+    <input type="file" name="file" required>
+    <button type="submit">Upload</button>
+</form>
+
+<hr>
+
+<h3>Available Job Postings</h3>
+{% if job_postings %}
+    <table style="width:100%; border-collapse: collapse;">
+        <tr style="background-color:#f2f2f2;">
+            <th style="text-align:left; padding:8px;">Title</th>
+            <th style="text-align:left; padding:8px;">Recruiter</th>
+            <th style="text-align:left; padding:8px;">Location</th>
+            <th style="text-align:left; padding:8px;">Salary Range</th>
+            <th style="text-align:left; padding:8px;">Posted</th>
+            <th style="text-align:left; padding:8px;">Action</th>
+        </tr>
+        {% for job in job_postings %}
+        <tr>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">{{ job.title }}</td>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">{{ job.recruiter_username }}</td>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">{{ job.location }}</td>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">{{ job.salary_range }}</td>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">{{ job.created_at|datetime_format }}</td>
+            <td style="padding:8px; border-bottom:1px solid #ddd;">
+                <a href="/candidate/messages?with={{ job.recruiter_username }}">Message Recruiter</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+{% else %}
+    <p>No job postings available at this time.</p>
+{% endif %}
+
+{% endblock %}

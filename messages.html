@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Messages</h2>
+
+<div class="clearfix">
+    <div class="sidebar">
+        <h4>Conversations</h4>
+        {% if partners %}
+            <ul>
+            {% for p in partners %}
+                <li><a href="{{ '/candidate/messages' if user.role=='candidate' else '/recruiter/messages' }}?with={{ p.username }}">{{ p.username }}</a></li>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p>No conversations yet.</p>
+        {% endif %}
+    </div>
+    <div class="chat">
+        {% if current_partner %}
+            <h4>Chat with {{ current_partner.username }}</h4>
+            <div style="max-height:300px; overflow-y:auto; border:1px solid #ddd; padding:0.5rem; margin-bottom:1rem;">
+                {% if messages %}
+                    <ul class="messages">
+                        {% for msg in messages %}
+                            {% if msg.sender_id == user.id %}
+                                <li class="message-sent"><strong>You:</strong> {{ msg.content }} <br><small>{{ msg.timestamp|datetime_format }}</small></li>
+                            {% else %}
+                                <li class="message-received"><strong>{{ msg.sender_username }}:</strong> {{ msg.content }} <br><small>{{ msg.timestamp|datetime_format }}</small></li>
+                            {% endif %}
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p>No messages yet. Start the conversation below.</p>
+                {% endif %}
+            </div>
+            <form method="post" action="{{ '/candidate/message/send' if user.role=='candidate' else '/recruiter/message/send' }}">
+                <input type="hidden" name="to_username" value="{{ current_partner.username }}">
+                <textarea name="content" rows="3" style="width:100%;" placeholder="Type your message here..." required></textarea><br>
+                <button type="submit">Send</button>
+            </form>
+        {% else %}
+            <p>Select a conversation from the list to view and send messages.</p>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

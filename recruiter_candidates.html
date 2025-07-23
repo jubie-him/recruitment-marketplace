@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Candidates</h2>
+
+<div class="clearfix">
+    <div class="sidebar">
+        <h4>Candidate List</h4>
+        <ul>
+            {% for cand in candidates %}
+                <li>
+                    <a href="/recruiter/candidates?username={{ cand.username }}">{{ cand.username }}</a>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+    <div class="chat">
+        {% if selected_candidate %}
+            <h4>Documents for {{ selected_candidate.username }}</h4>
+            {% if documents %}
+                <ul>
+                    {% for doc in documents %}
+                        <li>
+                            <a href="/uploads/{{ doc.filename }}" target="_blank">{{ doc.original_name }}</a>
+                            (uploaded {{ doc.uploaded_at|datetime_format }})
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p>No documents uploaded.</p>
+            {% endif %}
+            <p>
+                <a href="/recruiter/messages?with={{ selected_candidate.username }}">Send Message</a>
+            </p>
+        {% else %}
+            <p>Select a candidate from the list to view their documents.</p>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
