@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Create Job - Recruiter{% endblock %}
+{% block content %}
+    <h2>Create New Job Posting</h2>
+    <form method="post" action="/recruiter/jobs/create">
+        <label for="title">Job Title</label>
+        <input type="text" id="title" name="title" required>
+
+        <label for="location">Location</label>
+        <input type="text" id="location" name="location" required>
+
+        <label for="description">Job Description</label>
+        <textarea id="description" name="description" rows="6" required></textarea>
+
+        <input type="submit" value="Create Job">
+    </form>
+{% endblock %}
