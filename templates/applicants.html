@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Applicants for {{ job.title }}{% endblock %}
+{% block content %}
+    <h2>Applicants for {{ job.title }}</h2>
+    <p><a href="/dashboard">&larr; Back to dashboard</a></p>
+    {% if applicants %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Full Name</th>
+                    <th>Email</th>
+                    <th>Resume</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for app in applicants %}
+                <tr>
+                    <td>{{ app.full_name }}</td>
+                    <td>{{ app.email }}</td>
+                    <td><a href="/resume/{{ app.resume_filename }}" target="_blank">Download</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No applicants yet.</p>
+    {% endif %}
+{% endblock %}
