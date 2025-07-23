@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Login - Recruitment Marketplace{% endblock %}
+{% block content %}
+    <h2>Login</h2>
+    {% if error %}
+        <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="/login">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" required>
+        
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required>
+        
+        <input type="submit" value="Login">
+    </form>
+    <p>Don't have an account? <a href="/register">Register here</a>.</p>
+{% endblock %}
