@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Recruiter{% endblock %}
+{% block content %}
+    <h2>Your Recruiter Dashboard</h2>
+    <p>Hello, {{ user.username }}! Manage your job postings below.</p>
+    <a href="/recruiter/jobs/create" class="button">Create New Job</a>
+    <div class="dashboard-grid">
+        {% for job in jobs %}
+        <div class="job-card">
+            <h3>{{ job.title }}</h3>
+            <p><strong>Location:</strong> {{ job.location }}</p>
+            <p>{{ job.description[:120] }}{% if job.description|length > 120 %}...{% endif %}</p>
+            <a href="/jobs/{{ job.key }}">View details</a> |
+            <a href="/recruiter/jobs/{{ job.key }}/applicants">View applicants</a>
+        </div>
+        {% else %}
+        <p>You haven't posted any jobs yet.</p>
+        {% endfor %}
+    </div>
+{% endblock %}
