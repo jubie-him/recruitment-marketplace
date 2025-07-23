@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Home - Recruitment Marketplace{% endblock %}
+{% block content %}
+    <h1>Welcome{% if user %}, {{ user.username }}{% endif %}!</h1>
+    <p>Browse the latest job openings below. Sign up or log in to apply.</p>
+    <div class="dashboard-grid">
+        {% for job in jobs %}
+        <div class="job-card">
+            <h3>{{ job.title }}</h3>
+            <p><strong>Location:</strong> {{ job.location }}</p>
+            <p>{{ job.description[:120] }}{% if job.description|length > 120 %}...{% endif %}</p>
+            <a href="/jobs/{{ job.key }}">View details</a>
+        </div>
+        {% else %}
+        <p>No jobs available at the moment.</p>
+        {% endfor %}
+    </div>
+{% endblock %}
